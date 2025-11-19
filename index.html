@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Patient Satisfaction Survey</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 900px;
+      margin: auto;
+      background: #f8f8ff;
+    }
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .hidden { display: none; }
+
+    .blocked {
+      padding: 20px;
+      background: #ffe6e6;
+      border: 1px solid #ff6b6b;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-size: 1.1rem;
+    }
+
+    iframe {
+      width: 100%;
+      height: 1200px;
+      border: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Patient Satisfaction Survey</h2>
+
+  <div id="block-message" class="blocked hidden">
+    <strong>You have recently submitted this survey.</strong><br><br>
+    Please wait <span id="remaining-time"></span> before you can answer again.
+  </div>
+
+  <div id="form-container" class="hidden">
+    <!-- ⭐ Your Google Form Embed -->
+    <iframe 
+      src="https://docs.google.com/forms/d/e/1FAIpQLSctm9KpOXzNz0IlCZZ9y-iZ8RqtWU8Ii1dTl0OERMbPTZRY8g/viewform?embedded=true">
+    </iframe>
+  </div>
+
+  <script>
+    const FORM_KEY = "patient_survey_timestamp";
+    const FOUR_DAYS = 4 * 24 * 60 * 60 * 1000;
+
+    const formContainer = document.getElementById("form-container");
+    const blockMsg = document.getElementById("block-message");
+    const remain = document.getElementById("remaining-time");
+
+    function msToTime(ms) {
+      let days = Math.floor(ms / (24 * 60 * 60 * 1000));
+      let hours = Math.floor((ms % (24*60*60*1000)) / (60*60*1000));
+      let mins = Math.floor((ms % (60*60*1000)) / (60*1000));
+      return `${days}d ${hours}h ${mins}m`;
+    }
+
+    function checkAccess() {
+      const lastSubmit = localStorage.getItem(FORM_KEY);
+
+      // No record -> allow
+      if (!lastSubmit) {
+        formContainer.classList.remove("hidden");
+        return;
+      }
+
+      const diff = Date.now() - parseInt(lastSubmit);
+
+      // Expired → allow again
+      if (diff >= FOUR_DAYS) {
+        formContainer.classList.remove("hidden");
+        return;
+      }
+
+      // Still locked
+      blockMsg.classList.remove("hidden");
+      remain.textContent = msToTime(FOUR_DAYS - diff);
+    }
+
+    // Auto-save timestamp if redirected with ?submitted=1
+    if (window.location.search.includes("submitted=1")) {
+      localStorage.setItem(FORM_KEY, Date.now());
+    }
+
+    checkAccess();
+  </script>
+
+</body>
+</html>
