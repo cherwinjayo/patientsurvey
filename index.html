@@ -1,112 +1,130 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Patient Satisfaction Survey</title>
   <script src="https://tally.so/widgets/embed.js"></script>
+
   <style>
-    body{font-family:Arial, sans-serif;padding:20px;max-width:900px;margin:auto;background:#f7faff}
+    body{font-family:Arial,sans-serif;padding:20px;max-width:900px;margin:auto;background:#f7faff}
     h2{text-align:center;margin-bottom:20px}
     .hidden{display:none}
-    .blocked{padding:20px;background:#ffe6e6;border:1px solid #ff4d4d;border-radius:10px;margin-bottom:20px;font-size:1.05rem}
-    iframe{width:100%;height:1000px;border:0}
+    
+    .thankyou, .blocked {
+      padding:20px;
+      border-radius:10px;
+      margin-bottom:20px;
+      font-size:1.1rem;
+    }
+    .thankyou {
+      background:#e0ffe0;
+      border:1px solid #4CAF50;
+    }
+    .blocked {
+      background:#ffe6e6;
+      border:1px solid #ff4d4d;
+    }
   </style>
 </head>
+
 <body>
-  <h2>Patient Satisfaction Survey</h2>
 
-  <div id="block-message" class="blocked hidden">
-    <strong>You have already submitted this survey.</strong><br><br>
-    Please wait <span id="remaining-time"></span> before you can answer again.
-  </div>
+<h2>Patient Satisfaction Survey</h2>
 
-  <div id="form-container" class="hidden">
-    <!-- Tally embed -->
-    <iframe data-tally-src="https://tally.so/r/VLLvPy" title="Patient Survey"></iframe>
-  </div>
+<div id="thankyou" class="thankyou hidden">
+  <strong>شكراً لك على تعبئة الاستبيان! Thank you for submitting the survey!</strong><br><br>
+  تم تسجيل ردك بنجاح. Your response has been recorded.
+</div>
+
+<div id="block-message" class="blocked hidden">
+  <strong>لقد قمت بتعبئة هذا الاستبيان مسبقاً. You have already submitted this survey.</strong><br><br>
+  يرجى الانتظار لمدة Please wait <span id="remaining-time"></span> قبل أن تتمكن من الإجابة مرة أخرى. before you can answer again.
+</div>
+
+<div id="form-container" class="hidden">
+  <iframe 
+    data-tally-src="https://tally.so/r/VLLvPy"
+    width="100%" height="1000" frameborder="0"></iframe>
+</div>
 
 <script>
 (function(){
   const FORM_KEY = "patient_survey_timestamp";
+  const SHOWED_THANKYOU = "survey_thankyou_shown";
   const FOUR_DAYS = 4 * 24 * 60 * 60 * 1000;
+
+  const thankyou = document.getElementById("thankyou");
   const formContainer = document.getElementById("form-container");
   const blockMsg = document.getElementById("block-message");
   const remain = document.getElementById("remaining-time");
 
   function msToTime(ms){
-    const days = Math.floor(ms / (24*60*60*1000));
-    const hours = Math.floor((ms % (24*60*60*1000)) / (60*60*1000));
-    const mins = Math.floor((ms % (60*60*1000)) / (60*1000));
-    return `${days}d ${hours}h ${mins}m`;
+    const d = Math.floor(ms / (24*60*60*1000));
+    const h = Math.floor((ms % (24*60*60*1000))/(60*60*1000));
+    const m = Math.floor((ms % (60*60*1000)) / (60*1000));
+    return `${d}d ${h}h ${m}m`;
+  }
+
+  function stripQuery() {
+    if(window.history.replaceState){
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }
+
+  function isTallyRedirect() {
+    const qs = new URLSearchParams(window.location.search);
+    const submitted = qs.get("submitted") === "1";
+    const fromTally = qs.get("from") === "tally";
+    return submitted && fromTally;
   }
 
   function checkAccess(){
     const lastSubmit = localStorage.getItem(FORM_KEY);
+
     if(!lastSubmit){
       formContainer.classList.remove("hidden");
       return;
     }
+
     const diff = Date.now() - parseInt(lastSubmit, 10);
+
     if(diff >= FOUR_DAYS){
       formContainer.classList.remove("hidden");
       return;
     }
+
     blockMsg.classList.remove("hidden");
     remain.textContent = msToTime(FOUR_DAYS - diff);
   }
 
-  // Helper to remove query string cleanly
-  function stripQuery() {
-    if(window.history && window.history.replaceState) {
-      const clean = window.location.pathname;
-      window.history.replaceState({}, document.title, clean);
-    }
-  }
-
-  // Determine if this visit came from a Tally redirect
-  function isTallyRedirect() {
-    try {
-      const qs = new URLSearchParams(window.location.search);
-      // Allow either ?submitted=1 AND either (a) referrer contains 'tally.so' OR (b) from=tally param exists
-      const hasSubmittedFlag = qs.get('submitted') === '1';
-      const hasFromTally = qs.get('from') === 'tally';
-      const ref = (document.referrer || '').toLowerCase();
-      const refIsTally = ref.includes('tally.so') || ref.includes('tally.co');
-      return hasSubmittedFlag && (refIsTally || hasFromTally);
-    } catch(e) {
-      return false;
-    }
-  }
-
-  // If this is a real Tally redirect, save timestamp once and then strip the query
+  // Handle Tally redirect
   if(isTallyRedirect()){
+    // show thankyou message once
+    thankyou.classList.remove("hidden");
+
+    // save timestamp
     localStorage.setItem(FORM_KEY, Date.now().toString());
-    // remove query string so browser history won't auto-restore it
+
+    // mark thankyou shown (so only shows once)
+    localStorage.setItem(SHOWED_THANKYOU, "1");
+
     stripQuery();
-  } else {
-    // If URL contains ?submitted=1 but not from Tally, remove it immediately (so manual visits don't lock)
-    const qs = new URLSearchParams(window.location.search || '');
-    if(qs.get('submitted') === '1' && qs.get('from') !== 'tally'){
-      stripQuery();
-    }
+    return;
   }
 
-  // Finally, check access and load Tally embed if allowed
-  checkAccess();
-
-  // load Tally embed script (safe to call even if hidden)
-  if(window.Tally && typeof window.Tally.loadEmbeds === 'function'){
-    window.Tally.loadEmbeds();
+  // If thankyou was shown already → don't show form again
+  if(localStorage.getItem(SHOWED_THANKYOU)){
+    checkAccess();
   } else {
-    // If script hasn't loaded yet, wait a bit
-    window.addEventListener('load', () => {
-      if(window.Tally && typeof window.Tally.loadEmbeds === 'function'){
-        window.Tally.loadEmbeds();
-      }
-    });
+    formContainer.classList.remove("hidden");
+  }
+
+  if(window.Tally && Tally.loadEmbeds){
+    Tally.loadEmbeds();
   }
 })();
 </script>
+
 </body>
 </html>
