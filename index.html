@@ -89,13 +89,13 @@
 
     const diff = Date.now() - parseInt(lastSubmit, 10);
 
-    if(diff >= FOUR_DAYS){
+    if(diff >= THREE_DAYS){
       formContainer.classList.remove("hidden");
       return;
     }
 
     blockMsg.classList.remove("hidden");
-    remain.textContent = msToTime(FOUR_DAYS - diff);
+    remain.textContent = msToTime(THREE_DAYS - diff);
   }
 
   // Handle Tally redirect
@@ -128,4 +128,5 @@
 
 </body>
 </html>
+
 
