@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Patient Satisfaction Survey</title>
   <script src="https://tally.so/widgets/embed.js"></script>
 
@@ -15,7 +15,8 @@
       padding:20px;
       border-radius:10px;
       margin-bottom:20px;
-      font-size:1.1rem;
+      font-size:1.05rem;
+      line-height:1.5;
     }
     .thankyou {
       background:#e0ffe0;
@@ -25,6 +26,14 @@
       background:#ffe6e6;
       border:1px solid #ff4d4d;
     }
+
+    /* Arabic styling (keeps Arabic right-to-left) */
+    .arabic { display:block; direction:rtl; font-size:1.02rem; margin-top:6px; }
+
+    /* small print */
+    .muted { color:#666; font-size:0.95rem; margin-top:8px; }
+
+    iframe{width:100%; height:1000px; border:0}
   </style>
 </head>
 
@@ -32,103 +41,318 @@
 
 <h2>Patient Satisfaction Survey</h2>
 
-<div id="thankyou" class="thankyou hidden">
-  <strong>Thank you for submitting the survey!</strong><br><br>
-  Your response has been recorded.
+<!-- Thank you (English then Arabic) -->
+<div id="thankyou" class="thankyou hidden" role="status" aria-live="polite">
+  <strong>Thank you for submitting the survey!</strong><br>
+  <span class="arabic">شكراً لك على تعبئة الاستبيان!</span>
+
+  <div class="muted" style="margin-top:8px;">
+    <div>Your response has been recorded.</div>
+    <div class="arabic">تم تسجيل ردك بنجاح.</div>
+  </div>
 </div>
 
-<div id="block-message" class="blocked hidden">
-  <strong>You have already submitted this survey.</strong><br><br>
-  Please wait <span id="remaining-time"></span> before you can answer again.
+<!-- Block message (English then Arabic). The remaining time will be injected into both languages -->
+<div id="block-message" class="blocked hidden" role="alert" aria-live="polite">
+  <strong id="block-en">You have already submitted this survey.</strong><br>
+  <span class="arabic" id="block-ar">لقد قمت بتعبئة هذا الاستبيان مسبقاً.</span>
+
+  <div class="muted" style="margin-top:8px;">
+    <div id="wait-en">Please wait <span id="remaining-time-en"></span> before you can answer again.</div>
+    <div class="arabic" id="wait-ar">يرجى الانتظار لمدة <span id="remaining-time-ar"></span> قبل أن تتمكن من الإجابة مرة أخرى.</div>
+  </div>
 </div>
 
 <div id="form-container" class="hidden">
-  <iframe 
-    id="tallyframe"
-    width="100%" height="1000" frameborder="0">
-  </iframe>
+  <!-- Iframe will be set by script with the nurse param -->
+  <iframe id="tallyframe" title="Patient Survey"></iframe>
 </div>
 
 <script>
-(function(){
+/*
+  Final production script:
+  - Triple storage lockout: localStorage + cookie + IndexedDB
+  - 3 day lock duration
+  - Nurse param support: ?nurse=NAME
+  - Tally embed URL dynamic injection
+  - Thank you shown on first redirect from Tally (submitted=1&from=tally)
+  - Arabic + English messages (both shown)
+*/
+
+(async function(){
   const FORM_KEY = "patient_survey_timestamp";
   const SHOWED_THANKYOU = "survey_thankyou_shown";
   const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
-  const thankyou = document.getElementById("thankyou");
+  const thankyouEl = document.getElementById("thankyou");
   const formContainer = document.getElementById("form-container");
   const blockMsg = document.getElementById("block-message");
-  const remain = document.getElementById("remaining-time");
+  const remainEn = document.getElementById("remaining-time-en");
+  const remainAr = document.getElementById("remaining-time-ar");
   const frame = document.getElementById("tallyframe");
 
-  // Get Query Param
+  // Query params
   const qs = new URLSearchParams(window.location.search);
   const nurseName = qs.get("nurse") ? qs.get("nurse") : "";
 
+  // Helper: convert ms to human readable (d h m)
   function msToTime(ms){
     const d = Math.floor(ms / (24*60*60*1000));
     const h = Math.floor((ms % (24*60*60*1000))/(60*60*1000));
     const m = Math.floor((ms % (60*60*1000)) / (60*1000));
-    return `${d}d ${h}h ${m}m`;
+    // English format
+    let parts = [];
+    if(d) parts.push(d + (d===1 ? " day" : " days"));
+    if(h) parts.push(h + (h===1 ? " hour" : " hours"));
+    if(m || parts.length===0) parts.push(m + (m===1 ? " minute" : " minutes"));
+    return { en: parts.join(" "), ar: `${d} يوم ${h} ساعة ${m} دقيقة` };
   }
 
+  // Cookie helpers
+  function setCookie(name, value, days){
+    const expires = new Date(Date.now() + days*24*60*60*1000).toUTCString();
+    document.cookie = name + "=" + encodeURIComponent(value) + "; expires=" + expires + "; path=/; SameSite=Lax";
+  }
+  function getCookie(name){
+    const pairs = document.cookie.split(";").map(s => s.trim());
+    for(const p of pairs){
+      if(!p) continue;
+      const [k, v] = p.split("=");
+      if(k === name) return decodeURIComponent(v || "");
+    }
+    return null;
+  }
+
+  // IndexedDB helpers (promisified)
+  function openDb(){
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('surveyLockDB', 1);
+      req.onupgradeneeded = function(e){
+        const db = e.target.result;
+        if(!db.objectStoreNames.contains('locks')){
+          db.createObjectStore('locks', { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = function(e){
+        resolve(e.target.result);
+      };
+      req.onerror = function(e){
+        reject(e);
+      };
+    });
+  }
+
+  async function idbSetTimestamp(ts){
+    try {
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('locks', 'readwrite');
+        const store = tx.objectStore('locks');
+        store.put({ id: 'timestamp', ts: ts.toString() });
+        tx.oncomplete = function(){ resolve(true); };
+        tx.onerror = function(e){ resolve(false); }; // don't break on idb error
+      });
+    } catch(e){
+      return false;
+    }
+  }
+
+  async function idbGetTimestamp(){
+    try {
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('locks', 'readonly');
+        const store = tx.objectStore('locks');
+        const req = store.get('timestamp');
+        req.onsuccess = function(e){
+          const val = e.target.result;
+          resolve(val ? val.ts : null);
+        };
+        req.onerror = function(){ resolve(null); };
+      });
+    } catch(e){
+      return null;
+    }
+  }
+
+  async function idbClear(){
+    try {
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('locks', 'readwrite');
+        const store = tx.objectStore('locks');
+        store.delete('timestamp');
+        tx.oncomplete = function(){ resolve(true); };
+        tx.onerror = function(){ resolve(false); };
+      });
+    } catch(e){
+      return false;
+    }
+  }
+
+  // localStorage helpers
+  function lsSet(ts){ try { localStorage.setItem(FORM_KEY, ts.toString()); } catch(e) {} }
+  function lsGet(){ try { return localStorage.getItem(FORM_KEY); } catch(e){ return null; } }
+  function lsClear(){ try { localStorage.removeItem(FORM_KEY); } catch(e) {} }
+
+  // Unified set lock: write to all storages
+  async function setLock(ts){
+    try {
+      lsSet(ts);
+      setCookie(FORM_KEY, ts, 7); // cookie expiry longer than lock period
+      await idbSetTimestamp(ts);
+    } catch(e){ /* silent */ }
+  }
+
+  // Unified clear lock
+  async function clearLock(){
+    try {
+      lsClear();
+      setCookie(FORM_KEY, "", -1); // expire cookie
+      await idbClear();
+      localStorage.removeItem(SHOWED_THANKYOU);
+    } catch(e){}
+  }
+
+  // Read any timestamp available (prefer localStorage -> cookie -> idb)
+  async function readAnyLock(){
+    const ls = lsGet();
+    if(ls) return ls;
+    const ck = getCookie(FORM_KEY);
+    if(ck) return ck;
+    const idb = await idbGetTimestamp();
+    if(idb) return idb;
+    return null;
+  }
+
+  // If one storage exists, restore others for redundancy
+  async function restoreStoragesIfNeeded(){
+    try {
+      const timestamp = await readAnyLock();
+      if(!timestamp) return;
+      // write to all to ensure redundancy
+      await setLock(timestamp);
+    } catch(e){}
+  }
+
+  // Remove query string cleanly
   function stripQuery() {
-    if(window.history.replaceState){
-      window.history.replaceState({}, document.title, window.location.pathname);
+    if(window.history && window.history.replaceState) {
+      const clean = window.location.pathname;
+      window.history.replaceState({}, document.title, clean);
     }
   }
 
+  // Check whether the user arrived via Tally redirect
   function isTallyRedirect(){
-    const submitted = qs.get("submitted") === "1";
-    const fromTally = qs.get("from") === "tally";
-    return submitted && fromTally;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const submitted = params.get('submitted') === '1';
+      const fromTally = params.get('from') === 'tally';
+      // also accept referrer check as fallback
+      const ref = (document.referrer || '').toLowerCase();
+      const refIsTally = ref.includes('tally.so') || ref.includes('tally.co');
+      return submitted && (fromTally || refIsTally);
+    } catch(e){
+      return false;
+    }
   }
 
-  function checkAccess(){
-    const lastSubmit = localStorage.getItem(FORM_KEY);
-
-    if(!lastSubmit){
-      formContainer.classList.remove("hidden");
-      return;
-    }
-
-    const diff = Date.now() - parseInt(lastSubmit, 10);
-
-    if(diff >= THREE_DAYS){
-      formContainer.classList.remove("hidden");
-      return;
-    }
-
-    blockMsg.classList.remove("hidden");
-    remain.textContent = msToTime(THREE_DAYS - diff);
+  // Show thankyou block (both languages)
+  function showThankYou(){
+    thankyouEl.classList.remove('hidden');
+    formContainer.classList.add('hidden');
+    blockMsg.classList.add('hidden');
   }
 
-  // Build Tally embed URL dynamically with nurse field
-  function loadTally(){
+  // Show blocked state with remaining time (both languages)
+  function showBlocked(ts){
+    blockMsg.classList.remove('hidden');
+    formContainer.classList.add('hidden');
+    thankyouEl.classList.add('hidden');
+
+    const diff = Date.now() - parseInt(ts, 10);
+    const remaining = THREE_DAYS - diff;
+    const text = msToTime(Math.max(0, remaining));
+    remainEn.textContent = text.en;
+    remainAr.textContent = text.ar;
+  }
+
+  // Show form
+  function showForm(){
+    formContainer.classList.remove('hidden');
+    blockMsg.classList.add('hidden');
+    thankyouEl.classList.add('hidden');
+  }
+
+  // Build tally embed URL
+  function buildTallyUrl(){
     let tallyURL = "https://tally.so/r/VLLvPy";
+    // If nurseName is present, append nurse param
     if(nurseName){
+      // If other params exist in the tally URL in future, adjust accordingly
       tallyURL += "?nurse=" + encodeURIComponent(nurseName);
     }
-    frame.src = tallyURL;
+    return tallyURL;
   }
 
-  // Handle redirects
+  // Load tally iframe
+  function loadTally(){
+    frame.src = buildTallyUrl();
+    // ensure widget loader runs (safe to call)
+    if(window.Tally && typeof window.Tally.loadEmbeds === 'function'){
+      window.Tally.loadEmbeds();
+    } else {
+      window.addEventListener('load', () => {
+        if(window.Tally && typeof window.Tally.loadEmbeds === 'function'){
+          window.Tally.loadEmbeds();
+        }
+      });
+    }
+  }
+
+  // MAIN FLOW
+  await restoreStoragesIfNeeded();
+
   if(isTallyRedirect()){
-    thankyou.classList.remove("hidden");
-    localStorage.setItem(FORM_KEY, Date.now().toString());
-    localStorage.setItem(SHOWED_THANKYOU, "1");
+    // Real submission arrived from Tally
+    const ts = Date.now().toString();
+    // Set lock everywhere and record that thankyou was shown
+    await setLock(ts);
+    try { localStorage.setItem(SHOWED_THANKYOU, "1"); } catch(e){}
+    // Strip query so browser doesn't auto-append it later
     stripQuery();
+    // Show thank you message (English + Arabic)
+    showThankYou();
+    return; // stop further processing; user sees Thank You
+  }
+
+  // Not a redirect: check if any lock exists
+  const existingTs = await readAnyLock();
+  if(existingTs){
+    // If thank you was shown before, show blocked; otherwise also block (since a lock means submission happened)
+    showBlocked(existingTs);
     return;
   }
 
-  // If thankyou already shown → enforce lockout
-  if(localStorage.getItem(SHOWED_THANKYOU)){
-    checkAccess();
-  } else {
-    formContainer.classList.remove("hidden");
-  }
-
+  // No lock found: show form normally
+  showForm();
   loadTally();
+
+  // Extra: listen for messages — not reliable cross-origin for Tally,
+  // but keep for future if you use custom embeds that postMessage on submit.
+  window.addEventListener('message', async (ev) => {
+    // Example: if some embed posts "tally-submit" (not used by default)
+    if(ev && (ev.data === 'tally-submit' || ev.data === 'survey-submitted')){
+      const ts = Date.now().toString();
+      await setLock(ts);
+      try { localStorage.setItem(SHOWED_THANKYOU, "1"); } catch(e){}
+      stripQuery();
+      // show thank you
+      showThankYou();
+    }
+  });
+
 })();
 </script>
 
